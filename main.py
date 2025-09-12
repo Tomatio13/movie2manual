@@ -4,46 +4,54 @@ import json
 import re
 import sys
 import os
+import argparse
 from pathlib import Path
 from contextlib import redirect_stdout
 from extract_screenshot import Spec, extract_screenshots
 
-# .env から環境変数を読み込み
 try:
     from dotenv import load_dotenv  # type: ignore
 except Exception:
     load_dotenv = None  # type: ignore
 
-if load_dotenv is not None:
-    # プロジェクト直下の .env を優先的に読み込む
-    load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
-# API キーは複数候補名を許容（互換性のため）
-api_key = (
-    os.getenv("GOOGLE_API_KEY")
-    or os.getenv("GEMINI_API_KEY")
-    or os.getenv("GENAI_API_KEY")
-)
+DEFAULT_MODEL_NAME = "models/gemini-2.5-flash"
 
-if not api_key:
-    print(
-        "環境変数 GOOGLE_API_KEY (または GEMINI_API_KEY/GENAI_API_KEY) が未設定です。",
-        file=sys.stderr,
+
+def _load_env_file() -> None:
+    """Load .env from project root if available."""
+    if load_dotenv is not None:
+        load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+
+
+def _mask_api_key(key: str) -> str:
+    if isinstance(key, str) and len(key) >= 8:
+        return f"{key[:4]}...{key[-4:]}"
+    return "***"
+
+
+def get_api_key() -> str:
+    """Get API key from environment variables with .env support."""
+    _load_env_file()
+    api_key = (
+        os.getenv("GOOGLE_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GENAI_API_KEY")
     )
-    sys.exit(1)
+    if not api_key:
+        print(
+            "環境変数 GOOGLE_API_KEY (または GEMINI_API_KEY/GENAI_API_KEY) が未設定です。",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"API キーを .env から読み込みました: {_mask_api_key(api_key)}", file=sys.stderr)
+    return api_key
 
-# マスクして読み込み結果を出力（stdout 汚染を避け stderr へ）
-masked = (
-    f"{api_key[:4]}...{api_key[-4:]}" if isinstance(api_key, str) and len(api_key) >= 8 else "***"
-)
-print(f"API キーを .env から読み込みました: {masked}", file=sys.stderr)
 
-client = genai.Client(api_key=api_key)
+def create_genai_client(api_key: str) -> genai.Client:
+    return genai.Client(api_key=api_key)
 
-video_file_name = "/home/masato/Downloads/test/ワークフロー作成マニュアル.mp4"
-video_bytes = open(video_file_name, 'rb').read()
-
-prompt="""
+PROMPT_TEMPLATE = """
 あなたは優秀な日本人の動画分析エンジニアです。
 指定された動画を分析して、操作マニュアルを作成するための要素を抽出し、出力します。
 
@@ -76,23 +84,34 @@ prompt="""
 
 """
 
-# プレースホルダを実際の動画パスへ埋め込み
-prompt = prompt.replace("{video_file_name}", video_file_name)
+def build_prompt(video_file_name: str) -> str:
+    return PROMPT_TEMPLATE.replace("{video_file_name}", video_file_name)
 
-response = client.models.generate_content(
-    model='models/gemini-2.5-flash',
-    contents=types.Content(
-        parts=[
-            types.Part(
-                inline_data=types.Blob(data=video_bytes, mime_type='video/mp4')
-            ),
-            types.Part(text=prompt)
-        ]
+
+def read_video_bytes(video_file_name: str) -> bytes:
+    with open(video_file_name, "rb") as f:
+        return f.read()
+
+
+def generate_response_text(
+    client: genai.Client,
+    video_file_name: str,
+    prompt: str,
+    model_name: str = DEFAULT_MODEL_NAME,
+) -> str:
+    video_bytes = read_video_bytes(video_file_name)
+    response = client.models.generate_content(
+        model=model_name,
+        contents=types.Content(
+            parts=[
+                types.Part(
+                    inline_data=types.Blob(data=video_bytes, mime_type='video/mp4')
+                ),
+                types.Part(text=prompt),
+            ]
+        ),
     )
-)
-
-resp_text = response.text
-print(resp_text)
+    return response.text
 
 # --- 以下: 応答本文からJSONを抽出し、静止画抽出を実行（標準出力は汚さない） ---
 
@@ -164,21 +183,19 @@ def _extract_json_from_text(text: str):
             return obj
     return None
 
-try:
+
+def handle_response_and_extract(resp_text: str, default_video_file: str) -> None:
     spec_dict = _extract_json_from_text(resp_text)
     if spec_dict is None:
         raise ValueError("モデル応答から有効なJSONを抽出できませんでした。")
 
-    # デフォルト補完
     if "video" not in spec_dict:
-        spec_dict["video"] = video_file_name
+        spec_dict["video"] = default_video_file
     if "output_dir" not in spec_dict:
         spec_dict["output_dir"] = "./manual_assets"
     if "markdown_output" not in spec_dict:
         spec_dict["markdown_output"] = "./manual.md"
 
-
-    # body_markdown を output_dir/markdown_output に保存
     try:
         out_dir = Path(spec_dict.get("output_dir", "./manual_assets"))
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -189,16 +206,35 @@ try:
     except Exception as e:
         print(f"Markdown 保存でエラー: {e}", file=sys.stderr)
 
-    # Spec 変換
     spec = Spec.from_dict(spec_dict)
-    # 動画存在チェック
     if not Path(spec.video).exists():
         print(f"動画ファイルが見つかりません: {spec.video}", file=sys.stderr)
-    else:
-        # 実行中の標準出力は標準エラーへ退避して、応答本文のみがstdoutに残るようにする
-        with redirect_stdout(sys.stderr):
-            extract_screenshots(spec)
+        return
+    with redirect_stdout(sys.stderr):
+        extract_screenshots(spec)
 
 
-except Exception as e:
-    print(f"スクリーンショット抽出処理でエラー: {e}", file=sys.stderr)
+def main() -> int:
+    parser = argparse.ArgumentParser(description="動画解析から手順書素案を生成し静止画を抽出")
+    parser.add_argument(
+        "--video",
+        required=True,
+        help="入力動画ファイルパス（必須）",
+    )
+    args = parser.parse_args()
+
+    try:
+        api_key = get_api_key()
+        client = create_genai_client(api_key)
+        prompt = build_prompt(args.video)
+        resp_text = generate_response_text(client, args.video, prompt, DEFAULT_MODEL_NAME)
+        print(resp_text)
+        handle_response_and_extract(resp_text, args.video)
+        return 0
+    except Exception as e:
+        print(f"処理中にエラーが発生しました: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
