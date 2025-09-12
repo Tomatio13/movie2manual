@@ -7,7 +7,9 @@ import os
 import argparse
 from pathlib import Path
 from contextlib import redirect_stdout
-from extract_screenshot import Spec, extract_screenshots
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+from extract_screenshot import ScreenshotSpec, extract_screenshots
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -189,29 +191,48 @@ def handle_response_and_extract(resp_text: str, default_video_file: str) -> None
     if spec_dict is None:
         raise ValueError("モデル応答から有効なJSONを抽出できませんでした。")
 
-    if "video" not in spec_dict:
-        spec_dict["video"] = default_video_file
-    if "output_dir" not in spec_dict:
-        spec_dict["output_dir"] = "./manual_assets"
-    if "markdown_output" not in spec_dict:
-        spec_dict["markdown_output"] = "./manual.md"
+    spec = Spec.from_dict(spec_dict)
+    if not spec.video:
+        spec.video = default_video_file
 
     try:
-        out_dir = Path(spec_dict.get("output_dir", "./manual_assets"))
+        out_dir = Path(spec.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        md_name = spec_dict.get("markdown_output", "manual.md")
-        md_path = out_dir / md_name
-        body = spec_dict.get("body_markdown", "")
-        md_path.write_text(body, encoding="utf-8")
+        md_path = out_dir / spec.markdown_output
+        md_path.write_text(spec.body_markdown or "", encoding="utf-8")
     except Exception as e:
         print(f"Markdown 保存でエラー: {e}", file=sys.stderr)
 
-    spec = Spec.from_dict(spec_dict)
     if not Path(spec.video).exists():
         print(f"動画ファイルが見つかりません: {spec.video}", file=sys.stderr)
         return
     with redirect_stdout(sys.stderr):
-        extract_screenshots(spec)
+        extract_screenshots(spec.video, spec.output_dir, spec.screenshots or [])
+
+
+# --- データ構造（main 用の軽量 Spec） ---
+@dataclass
+class Spec:
+    video: str
+    output_dir: str = "./manual_assets"
+    markdown_output: str = "./manual.md"
+    title: str = "操作マニュアル"
+    author: str = ""
+    body_markdown: str = ""
+    screenshots: Optional[List[ScreenshotSpec]] = None
+
+    @staticmethod
+    def from_dict(d: Dict[str, Any]) -> "Spec":
+        shots = [ScreenshotSpec(**s) for s in d.get("screenshots", [])]
+        return Spec(
+            video=d.get("video", ""),
+            output_dir=d.get("output_dir", "./manual_assets"),
+            markdown_output=d.get("markdown_output", "./manual.md"),
+            title=d.get("title", "操作マニュアル"),
+            author=d.get("author", ""),
+            body_markdown=d.get("body_markdown", ""),
+            screenshots=shots,
+        )
 
 
 def main() -> int:

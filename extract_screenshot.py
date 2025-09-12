@@ -4,22 +4,18 @@
 静止画抽出スクリプト
 
 機能概要:
-- JSONで受け取ったプロンプト仕様に基づき、ffmpegで静止画を抽出
+- 指定された動画とスクリーンショット仕様に基づき、ffmpegで静止画を抽出
 
 前提:
 - ffmpeg がインストールされていること
 
 使い方:
-  python test.py --spec prompt.json
+  python extract_screenshot.py --spec prompt.json
 
 prompt.json の例:
 {
   "video": "./input.mp4",
   "output_dir": "./manual_assets",
-  "pdf_output": "./manual.pdf",
-  "title": "操作マニュアル",
-  "author": "Your Name",
-  "body_markdown": "# イントロ\nこのマニュアルは...\n",
   "screenshots": [
     {"time": "00:00:03.500", "filename": "step1.png", "caption": "アプリ起動"},
     {"time": 10.0, "filename": "menu.png", "caption": "メニューから設定を開く"}
@@ -82,43 +78,19 @@ class ScreenshotSpec:
     caption: Optional[str] = None
 
 
-@dataclass
-class Spec:
-    video: str
-    output_dir: str
-    pdf_output: str
-    title: str = "操作マニュアル"
-    author: str = ""
-    body_markdown: str = ""
-    screenshots: List[ScreenshotSpec] = None  # type: ignore
-
-    @staticmethod
-    def from_dict(d: Dict[str, Any]) -> "Spec":
-        shots = [ScreenshotSpec(**s) for s in d.get("screenshots", [])]
-        return Spec(
-            video=d["video"],
-            output_dir=d.get("output_dir", "./manual_assets"),
-            pdf_output=d.get("pdf_output", "./manual.pdf"),
-            title=d.get("title", "操作マニュアル"),
-            author=d.get("author", ""),
-            body_markdown=d.get("body_markdown", ""),
-            screenshots=shots,
-        )
-
-
-def extract_screenshots(spec: Spec) -> List[Path]:
+def extract_screenshots(video: str, output_dir: str, screenshots: List[ScreenshotSpec]) -> List[Path]:
     if which("ffmpeg") is None:
         raise RuntimeError("ffmpeg が見つかりません。インストールしてください。")
 
-    ensure_dir(spec.output_dir)
+    ensure_dir(output_dir)
     out_paths: List[Path] = []
-    for i, s in enumerate(spec.screenshots or []):
+    for i, s in enumerate(screenshots or []):
         t = format_timecode(s.time)
-        out_path = Path(spec.output_dir) / s.filename
+        out_path = Path(output_dir) / s.filename
         # 高速かつ近似シーク: -ss を -i より前に置く
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-ss", t, "-i", spec.video,
+            "-ss", t, "-i", video,
             "-frames:v", "1", "-q:v", "2",
             str(out_path),
         ]
@@ -140,23 +112,29 @@ def main() -> int:
         return 2
 
     try:
-        spec_dict = json.loads(spec_path.read_text(encoding="utf-8"),strict=False)
+        spec_dict = json.loads(spec_path.read_text(encoding="utf-8"), strict=False)
     except json.JSONDecodeError as e:
         print(f"JSON の読み込みに失敗しました: {e}", file=sys.stderr)
         return 2
 
+    # 必須キーの検証
+    if "video" not in spec_dict:
+        print("spec に 'video' がありません", file=sys.stderr)
+        return 2
+    video = spec_dict["video"]
+    output_dir = spec_dict.get("output_dir", "./manual_assets")
     try:
-        spec = Spec.from_dict(spec_dict)
+        shots = [ScreenshotSpec(**s) for s in spec_dict.get("screenshots", [])]
     except Exception as e:
-        print(f"spec の構文が不正です: {e}", file=sys.stderr)
+        print(f"screenshots の構文が不正です: {e}", file=sys.stderr)
         return 2
 
-    if not Path(spec.video).exists():
-        print(f"動画ファイルが見つかりません: {spec.video}", file=sys.stderr)
+    if not Path(video).exists():
+        print(f"動画ファイルが見つかりません: {video}", file=sys.stderr)
         return 2
 
     try:
-        images = extract_screenshots(spec)
+        images = extract_screenshots(video, output_dir, shots)
     except Exception as e:
         print(f"静止画抽出でエラー: {e}", file=sys.stderr)
         return 1
