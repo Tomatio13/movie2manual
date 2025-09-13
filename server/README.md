@@ -27,20 +27,22 @@ source .venv/bin/activate
 python -m server.main
 ```
 
-### SSE サーバー
+### SSE サーバー（推奨: module:var 参照）
 HTTP(S) 経由で接続可能な SSE サーバーとして起動:
 ```bash
 source .venv/bin/activate
-fastmcp run server/main.py --transport sse --port 9001 --host 0.0.0.0
+python -m fastmcp main.py --transport sse --port 9001 --host 0.0.0.0
 ```
 - エンドポイント: `http://<host>:9001/sse`
 - n8n の MCP Client Tool では上記 URL を設定
+- 備考: `fastmcp run server/main.py` のようなファイルパス実行は、
+  インポート解決の都合で失敗する場合があります（推奨しません）。
 
 ### fastmcp CLI（module:var 参照）
 `server/main.py` は `mcp` 変数をエクスポートしています:
 ```bash
 source .venv/bin/activate
-python -m fastmcp server.main:mcp --transport stdio
+python -m fastmcp main.py --transport stdio
 ```
 
 ## 提供ツール
