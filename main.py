@@ -9,6 +9,7 @@ from pathlib import Path
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from openai import OpenAI  # OpenAI 互換APIや Ollama の OpenAI互換エンドポイントで使用
 from extract_screenshot import ScreenshotSpec, extract_screenshots
 
 try:
@@ -18,6 +19,14 @@ except Exception:
 
 
 DEFAULT_MODEL_NAME = "models/gemini-2.5-flash"
+
+
+@dataclass
+class ProviderConfig:
+    provider: str  # "gemini" | "openai" | "ollama"
+    base_url: Optional[str]
+    model_name: str
+    api_key: Optional[str]
 
 
 def _load_env_file() -> None:
@@ -32,26 +41,66 @@ def _mask_api_key(key: str) -> str:
     return "***"
 
 
-def get_api_key() -> str:
-    """Get API key from environment variables with .env support."""
+def get_provider_config() -> ProviderConfig:
+    """Read provider configuration from environment variables (.env supported)."""
     _load_env_file()
+    provider = (os.getenv("LLM_PROVIDER") or "gemini").strip().lower()
+    base_url = os.getenv("LLM_BASE_URL")
+    model_name = os.getenv("LLM_MODEL") or DEFAULT_MODEL_NAME
+
+    # APIキーは共通キー LLM_API_KEY を最優先、次に既存互換の個別名
     api_key = (
-        os.getenv("GOOGLE_API_KEY")
+        os.getenv("LLM_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
         or os.getenv("GEMINI_API_KEY")
         or os.getenv("GENAI_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
     )
-    if not api_key:
-        print(
-            "環境変数 GOOGLE_API_KEY (または GEMINI_API_KEY/GENAI_API_KEY) が未設定です。",
-            file=sys.stderr,
-        )
+
+    if provider == "gemini":
+        if not api_key:
+            print(
+                "LLM_PROVIDER=gemini の場合、LLM_API_KEY または GOOGLE_API_KEY 等が必要です。",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not model_name or model_name == "":
+            model_name = DEFAULT_MODEL_NAME
+    elif provider in ("openai", "ollama"):
+        # OpenAI互換系: base_url が未指定なら既定を補う
+        if provider == "openai" and not base_url:
+            base_url = "https://api.openai.com/v1"
+        if provider == "ollama" and not base_url:
+            base_url = "http://localhost:11434/v1"
+        # Ollama はAPIキー不要だが OpenAI SDK の都合でダミーを許容
+        if provider == "openai" and not api_key:
+            print("LLM_PROVIDER=openai の場合、LLM_API_KEY または OPENAI_API_KEY が必要です。", file=sys.stderr)
+            sys.exit(1)
+        if provider == "ollama" and not api_key:
+            api_key = "ollama"  # ダミー
+        if not model_name or model_name == "" or model_name == DEFAULT_MODEL_NAME:
+            # プロバイダ既定
+            model_name = os.getenv("LLM_MODEL") or ("gpt-4o-mini" if provider == "openai" else "llama3.1")
+    else:
+        print(f"未対応の LLM_PROVIDER: {provider}", file=sys.stderr)
         sys.exit(1)
-    print(f"API キーを .env から読み込みました: {_mask_api_key(api_key)}", file=sys.stderr)
-    return api_key
+
+    if api_key:
+        print(f"API キーを .env から読み込みました: {_mask_api_key(api_key)}", file=sys.stderr)
+    else:
+        print("API キーなしで動作します（ollama想定）", file=sys.stderr)
+
+    return ProviderConfig(provider=provider, base_url=base_url, model_name=model_name, api_key=api_key)
 
 
-def create_genai_client(api_key: str) -> genai.Client:
+def create_gemini_client(api_key: str) -> genai.Client:
     return genai.Client(api_key=api_key)
+
+
+def create_openai_compatible_client(api_key: str, base_url: Optional[str]) -> OpenAI:
+    if base_url:
+        return OpenAI(api_key=api_key or "", base_url=base_url)
+    return OpenAI(api_key=api_key or "")
 
 PROMPT_TEMPLATE = """
 あなたは優秀な日本人の動画分析エンジニアです。
@@ -95,12 +144,7 @@ def read_video_bytes(video_file_name: str) -> bytes:
         return f.read()
 
 
-def generate_response_text(
-    client: genai.Client,
-    video_file_name: str,
-    prompt: str,
-    model_name: str = DEFAULT_MODEL_NAME,
-) -> str:
+def generate_response_text_gemini(client: genai.Client, video_file_name: str, prompt: str, model_name: str) -> str:
     video_bytes = read_video_bytes(video_file_name)
     response = client.models.generate_content(
         model=model_name,
@@ -114,6 +158,19 @@ def generate_response_text(
         ),
     )
     return response.text
+
+
+def generate_response_text_openai(client: OpenAI, prompt: str, model_name: str) -> str:
+    # OpenAI互換/Ollama は動画バイト未対応の前提で、テキストのみで生成を依頼
+    completion = client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": "You are a helpful AI that outputs valid JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        # temperature=0.2,
+    )
+    return completion.choices[0].message.content or ""
 
 # --- 以下: 応答本文からJSONを抽出し、静止画抽出を実行（標準出力は汚さない） ---
 
@@ -245,10 +302,17 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        api_key = get_api_key()
-        client = create_genai_client(api_key)
+        cfg = get_provider_config()
         prompt = build_prompt(args.video)
-        resp_text = generate_response_text(client, args.video, prompt, DEFAULT_MODEL_NAME)
+        if cfg.provider == "gemini":
+            if not cfg.api_key:
+                raise RuntimeError("Gemini 用 API キーがありません")
+            client = create_gemini_client(cfg.api_key)
+            resp_text = generate_response_text_gemini(client, args.video, prompt, cfg.model_name)
+        else:
+            # OpenAI互換 / Ollama
+            client = create_openai_compatible_client(cfg.api_key or "", cfg.base_url)
+            resp_text = generate_response_text_openai(client, prompt, cfg.model_name)
         print(resp_text)
         handle_response_and_extract(resp_text, args.video)
         return 0
