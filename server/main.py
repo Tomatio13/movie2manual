@@ -27,6 +27,7 @@ root_str = str(PROJECT_ROOT)
 if root_str not in sys.path:
     sys.path.insert(0, root_str)
 from extract_screenshot import ScreenshotSpec, extract_screenshots  # type: ignore
+from pdf_export import convert_markdown_to_pdf  # type: ignore
 
 
 # チュートリアル準拠の最小構成: グローバル mcp に直接ツールを登録
@@ -308,6 +309,21 @@ def handle_response_and_extract(resp_text: str, default_video_file: str) -> None
         extract_screenshots(spec.video, spec.output_dir, spec.screenshots or [])
 
 
+async def _safe_ctx_log(ctx: Optional[Context], level: str, message: str) -> None:
+    if ctx is None:
+        return
+    try:
+        if level == "info":
+            await ctx.info(message)
+        elif level == "error":
+            await ctx.error(message)
+        else:
+            await ctx.log(level=level, message=message)
+    except Exception:
+        # SSE クライアント切断等で送信できない場合は握りつぶす
+        return
+
+
 @mcp.tool
 async def build_manual_from_video(
     video_path: str = "",
@@ -318,17 +334,19 @@ async def build_manual_from_video(
     model_provider: str = "",
     screenshot_policy_json: str = "",
     safe_write: bool = False,
+    export_pdf: bool = False,
+    pdf_output: str = "",
     ctx: Context = None,
 ) -> Dict[str, Any]:
     if ctx is not None:
-        await ctx.info("build_manual_from_video: start")
+        await _safe_ctx_log(ctx, "info", "build_manual_from_video: start")
 
     # 1) 入力動画の取得
     local_video: Optional[str] = video_path or None
     downloaded_tmp: Optional[str] = None
     if not local_video and video_url:
         if ctx is not None:
-            await ctx.info("downloading video from URL...")
+            await _safe_ctx_log(ctx, "info", "downloading video from URL...")
         local_video = _download_to_tmp(video_url)
         downloaded_tmp = local_video
 
@@ -347,17 +365,17 @@ async def build_manual_from_video(
         if not cfg.api_key:
             raise RuntimeError("Gemini 用 API キーがありません")
         if ctx is not None:
-            await ctx.info(f"calling Gemini model: {cfg.model_name}")
+            await _safe_ctx_log(ctx, "info", f"calling Gemini model: {cfg.model_name}")
         client = create_gemini_client(cfg.api_key)
         resp_text = generate_response_text_gemini(client, local_video, prompt, cfg.model_name)
     else:
         if ctx is not None:
-            await ctx.info(f"calling OpenAI-compatible model: {cfg.model_name}")
+            await _safe_ctx_log(ctx, "info", f"calling OpenAI-compatible model: {cfg.model_name}")
         client = create_openai_compatible_client(cfg.api_key or "", cfg.base_url)
         resp_text = generate_response_text_openai(client, prompt, cfg.model_name)
 
     if ctx is not None:
-        await ctx.info("LLM response received. Parsing spec...")
+        await _safe_ctx_log(ctx, "info", "LLM response received. Parsing spec...")
 
     # 5) Spec 抽出・正規化
     spec_dict = _extract_json_from_text(resp_text)
@@ -401,15 +419,32 @@ async def build_manual_from_video(
         manifest_path.write_text(json.dumps(manifest_obj, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         if ctx is not None:
-            await ctx.error(f"manifest write error: {e}")
+            await _safe_ctx_log(ctx, "error", f"manifest write error: {e}")
 
     # 7) Markdown 保存 + 画像抽出（既存関数で実行）
     if ctx is not None:
-        await ctx.info("writing markdown and extracting screenshots...")
+        await _safe_ctx_log(ctx, "info", "writing markdown and extracting screenshots...")
     handle_response_and_extract(resp_text, local_video)
 
-    # 8) 結果整形
+    # 8) 結果整形 + （任意）PDF 出力
     markdown_path = str((out_dir / spec.markdown_output).resolve())
+    pdf_path: Optional[str] = None
+    if export_pdf:
+        try:
+            md_path = Path(markdown_path)
+            if not md_path.exists():
+                raise FileNotFoundError(f"Markdown が見つかりません（PDF 変換元）: {md_path}")
+            if pdf_output:
+                pdf_target = Path(pdf_output)
+            else:
+                pdf_target = md_path.with_suffix(".pdf")
+            convert_markdown_to_pdf(str(md_path), str(pdf_target))
+            pdf_path = str(pdf_target.resolve())
+            if ctx is not None:
+                await _safe_ctx_log(ctx, "info", f"PDF 出力: {pdf_path}")
+        except Exception as e:
+            if ctx is not None:
+                await _safe_ctx_log(ctx, "error", f"PDF 変換でエラー: {e}")
     image_paths: List[str] = [str((out_dir / s.filename).resolve()) for s in (spec.screenshots or [])]
     warnings: List[str] = []
 
@@ -420,13 +455,14 @@ async def build_manual_from_video(
             pass
 
     if ctx is not None:
-        await ctx.info("build_manual_from_video: done")
+        await _safe_ctx_log(ctx, "info", "build_manual_from_video: done")
 
     return {
         "conversational_summary": f"手順書を生成し、{len(image_paths)} 枚のスクリーンショットを抽出しました。",
         "spec": manifest_obj["spec"],
         "manifest_path": str(manifest_path.resolve()),
         "markdown_path": markdown_path,
+        "pdf_path": pdf_path,
         "image_paths": image_paths,
         "warnings": warnings,
     }

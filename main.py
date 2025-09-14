@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from openai import OpenAI  # OpenAI 互換APIや Ollama の OpenAI互換エンドポイントで使用
 from extract_screenshot import ScreenshotSpec, extract_screenshots
+from pdf_export import convert_markdown_to_pdf
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -299,6 +300,17 @@ def main() -> int:
         required=True,
         help="入力動画ファイルパス（必須）",
     )
+    parser.add_argument(
+        "--export-pdf",
+        action="store_true",
+        help="Markdown 生成後に PDF を出力する（WeasyPrint または pandoc を使用）",
+    )
+    # 方式は WeasyPrint に固定
+    parser.add_argument(
+        "--pdf-output",
+        default="",
+        help="PDF 出力先パス（未指定なら Markdown と同じ場所に同名.pdf で出力）",
+    )
     args = parser.parse_args()
 
     try:
@@ -315,6 +327,25 @@ def main() -> int:
             resp_text = generate_response_text_openai(client, prompt, cfg.model_name)
         print(resp_text)
         handle_response_and_extract(resp_text, args.video)
+
+        # 追加: PDF 出力
+        if args.export_pdf:
+            spec_dict = _extract_json_from_text(resp_text)
+            if spec_dict is None:
+                raise ValueError("モデル応答から有効なJSONを抽出できませんでした（PDF出力前）。")
+            spec = Spec.from_dict(spec_dict)
+            out_dir = Path(spec.output_dir or "./manual_assets")
+            md_path = out_dir / (spec.markdown_output or "manual.md")
+            if not md_path.exists():
+                raise FileNotFoundError(f"Markdown が見つかりません（PDF 変換元）: {md_path}")
+
+            if args.pdf_output:
+                pdf_path = Path(args.pdf_output)
+            else:
+                pdf_path = out_dir / Path(md_path.name).with_suffix(".pdf")
+
+            convert_markdown_to_pdf(str(md_path), str(pdf_path))
+            print(f"PDF 出力: {pdf_path}", file=sys.stderr)
         return 0
     except Exception as e:
         print(f"処理中にエラーが発生しました: {e}", file=sys.stderr)

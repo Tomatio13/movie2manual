@@ -58,6 +58,8 @@ fastmcp run main.py --transport sse --port 9001 --host 0.0.0.0
   - `model_provider: string`: `gemini` / `openai` / `ollama`（空は環境変数に従う）
   - `screenshot_policy_json: string`: 追加ポリシーを JSON 文字列で（任意）
   - `safe_write: boolean`: 将来拡張用（既定: false）
+  - `export_pdf: boolean`（任意）: Markdown 完成後に PDF を生成（WeasyPrint）
+  - `pdf_output: string`（任意）: 出力先パス。未指定時は `markdown.md` と同ディレクトリに同名 `.pdf`
 - 返り値（抜粋）:
   - `manifest_path`, `markdown_path`, `image_paths[]`, `spec`, `warnings[]`, `conversational_summary`
 - 注意:
@@ -75,7 +77,9 @@ fastmcp run main.py --transport sse --port 9001 --host 0.0.0.0
     "author": "Team",
     "model_provider": "gemini",
     "screenshot_policy_json": "{}",
-    "safe_write": false
+    "safe_write": false,
+    "export_pdf": true,
+    "pdf_output": "./manual_assets/manual.pdf"
   }
 }
 ```
@@ -118,6 +122,9 @@ fastmcp run main.py --transport sse --port 9001 --host 0.0.0.0
   - `.venv` を有効化し、`pip install -r requirements.txt`
 - SSE に接続できない
   - ポート/バインド先（`--host`）を確認。`ss -ltnp '( sport = :9001 )'` で待受確認
+ - PDF 変換に失敗する（WeasyPrint）
+   - Python パッケージ `markdown`, `weasyprint` を導入
+   - 追加のシステム依存（Ubuntu 例）: `libcairo2 libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libssl-dev`
 
 ## ライセンス
 ルートの `LICENSE` を参照してください。

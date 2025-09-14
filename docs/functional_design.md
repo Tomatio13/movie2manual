@@ -56,14 +56,10 @@ owner: movie2manual maintainers
 6. 出力: `manifest.json` 保存、`handle_response_and_extract` で Markdown 書出しと画像抽出。
 7. 応答返却: `manifest_path`, `markdown_path`, `image_paths[]`, `spec`, `warnings[]`。
 
-### 4.2 例外・片付け
-- ダウンロードした一時ファイルは最後に削除試行。
-- 解析失敗時はエラーを返し、クライアント側で対処。
-
 ## 5. I/F 仕様
 ### 5.1 MCP ツール: build_manual_from_video
-- 入力: `video_path?`, `video_url?`, `output_dir?`, `title_hint?`, `author?`, `model_provider?`, `screenshot_policy_json?`, `safe_write?`。
-- 出力: `conversational_summary`, `spec`, `manifest_path`, `markdown_path`, `image_paths[]`, `warnings[]`。
+- 入力: `video_path?`, `video_url?`, `output_dir?`, `title_hint?`, `author?`, `model_provider?`, `screenshot_policy_json?`, `safe_write?`, `export_pdf?`, `pdf_output?`。
+- 出力: `conversational_summary`, `spec`, `manifest_path`, `markdown_path`, `pdf_path?`, `image_paths[]`, `warnings[]`。
 
 ### 5.2 MCP ツール: health_check
 - 入力: なし

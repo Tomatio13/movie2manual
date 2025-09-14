@@ -68,4 +68,12 @@ owner: movie2manual maintainers
 ## 11. 将来拡張（参考）
 - PDF/HTML エクスポート、図表生成、字幕解析、OCR 連携、国際化（i18n）。
 
+## 12. PDF 生成（WeasyPrint）依存
+- Python パッケージ（requirements.txt に含む）
+  - `markdown`
+  - `weasyprint`
+- システムライブラリ（Ubuntu/Debian 例）
+  - `libcairo2 libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libssl-dev`
+  - 例: `sudo apt-get update && sudo apt-get install -y libcairo2 libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libssl-dev`
+
 

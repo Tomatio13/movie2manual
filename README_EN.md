@@ -16,7 +16,7 @@ Video-to-manual tool that analyzes videos, generates a draft manual (JSON), extr
 ## Features
 - Generate draft manual with LLM (Gemini / OpenAI-compatible / Ollama)
 - Extract screenshots by timestamps with ffmpeg
-- Save body text as Markdown (PDF extensible)
+- Save body text as Markdown (supports PDF export via python-markdown + WeasyPrint)
 
 ## Requirements
 - Python 3.9+
@@ -45,6 +45,17 @@ cp .env.example .env
 python main.py --video /path/to/video.mp4
 ```
 
+### PDF export (optional)
+- This repo converts Markdown to HTML via `markdown.markdown()` and renders PDF with WeasyPrint.
+- Python deps: `markdown`, `weasyprint` (already in requirements.txt)
+- System deps (Ubuntu example): `libcairo2 libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libssl-dev`
+
+Examples:
+```bash
+python main.py --video /path/to/video.mp4 --export-pdf
+python main.py --video /path/to/video.mp4 --export-pdf --pdf-output ./manual_assets/manual.pdf
+```
+
 ### Quickstart (per provider)
 ```bash
 # Gemini
@@ -69,6 +80,9 @@ python main.py --video /path/to/video.mp4
 - ffmpeg not found: install ffmpeg and retry.
 - Missing env vars: set `LLM_PROVIDER`, and `LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY` if needed.
 - Invalid --video path: specify an existing file.
+- PDF export fails (WeasyPrint): ensure Python packages `markdown`, `weasyprint` are installed.
+- PDF export fails (system deps): install `libcairo2 libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev libssl-dev`.
+- n8n MCP Client default timeout is 60s; increase to 600s for long videos (set timeout in the MCP Client options).
 
 ## License
 MIT
