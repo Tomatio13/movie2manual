@@ -17,6 +17,7 @@
 - LLM（Gemini / OpenAI互換 / Ollama）でマニュアル素案(JSON)を生成
 - 指定されたタイムスタンプで ffmpeg により静止画を抽出
 - 生成された本文を Markdown として保存（PDF 出力に対応：python-markdown + WeasyPrint）
+- Streamlit アプリでもマニュアルを生成できます。
 
 ## 必要要件
 - Python 3.9+
@@ -71,6 +72,7 @@ LLM_MODEL=llama3.1
 - `.env` の API キーは読み込み時にマスクされ、標準エラーに記録されます。
 - 応答から抽出した JSON に従い、`output_dir` 配下に静止画と Markdown が生成されます。
 
+
 ### PDF 出力（オプション）
 - このリポジトリは、記事の基本どおり `markdown.markdown()` で HTML を生成し、WeasyPrint で PDF へ変換します。
 - 依存パッケージ: `markdown`, `weasyprint`（`requirements.txt` に含まれています）
@@ -114,9 +116,22 @@ python main.py --video /path/to/video.mp4
 このマニュアルは n8n の基本操作を説明します。
 ```
 
+## Streamlit UI（GUI）
+ブラウザから操作したい場合は Streamlit アプリを起動します。
+
+```bash
+streamlit run streamlit_app.py
+```
+
+![Streamlit アプリのスクリーンショット](assets/Screenshot_Streamlit.png)
+
+起動後は 画面の「動画ファイルを選択」で mp4 をアップロードし、「マニュアルを生成」を押すと一時ディレクトリ内で LLM 解析・スクリーンショット抽出・PDF 生成（任意）が走ります。
+生成が終わると Markdown／画像／`manifest.json` をまとめた ZIP と PDF（オプション）をブラウザから直接ダウンロードできます。環境変数は CLI と同じ `.env` を参照するため、事前に LLM_PROVIDER や API キーを設定してください。
+
+
 ## 補足
 - ffmpeg が未インストールの場合はエラーになります。
- - サブドキュメント: [`n8n_workflow_chat_with_mcp_manual/n8n_workflow_chat_with_mcp_manual.md`](n8n_workflow_chat_with_mcp_manual/n8n_workflow_chat_with_mcp_manual.md)
+ - サブドキュメント: [`sample/n8n_workflow_chat_with_mcp_manual.md`](sample/n8n_workflow_chat_with_mcp_manual.md)
 
 ## ffmpeg のインストール例
 - Ubuntu/Debian: `sudo apt-get update && sudo apt-get install -y ffmpeg`
@@ -135,5 +150,4 @@ python main.py --video /path/to/video.mp4
 
 ## ライセンス
 MIT
-
 
